@@ -6,18 +6,20 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { ChevronLeft, Send, RefreshCw, Save, Home, Sparkles } from "lucide-react";
+import { ChevronLeft, Send, Home, Sparkles, Check } from "lucide-react";
 import ChatMessage from "@/app/_components/ChatMessage";
 import { getElderSession, getElderName } from "@/app/_lib/session";
 
 // 화면 단계 타입
-type Step = "select" | "analyzing" | "chat" | "generating" | "preview" | "saved";
+type Step = "select" | "analyzing" | "chat" | "saved";
 
 // 대화 메시지 타입
 interface Message {
   id: string;
   role: "ai" | "user";
   content: string;
+  imageBase64?: string;   // 생성된 이미지 (AI 메시지에만)
+  imageMimeType?: string;
 }
 
 // 대화 히스토리 턴 (API 전송용)
@@ -55,10 +57,13 @@ export default function ElderMemoryPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // 생성된 이미지
+  // 이미지 생성 상태
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [hasGeneratedImage, setHasGeneratedImage] = useState(false);
+
+  // 저장 화면용 마지막 이미지
   const [generatedImageBase64, setGeneratedImageBase64] = useState<string | null>(null);
   const [generatedImageMime, setGeneratedImageMime] = useState<string>("image/png");
-  const [restoredImageUrl, setRestoredImageUrl] = useState<string | null>(null);
   const [restorationId, setRestorationId] = useState<string | null>(null);
 
   // 세션 초기화 + 사진 목록 로드
@@ -122,6 +127,8 @@ export default function ElderMemoryPage() {
     setStep("analyzing");
     setMessages([]);
     setChatHistory([]);
+    setHasGeneratedImage(false);
+    setGeneratedImageBase64(null);
 
     try {
       const data = await callMemoryChat({
@@ -152,7 +159,7 @@ export default function ElderMemoryPage() {
   // 일반 대화 전송
   const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed || chatLoading) return;
+    if (!trimmed || chatLoading || isGenerating) return;
 
     const userMsg: Message = { id: `user-${Date.now()}`, role: "user", content: trimmed };
     setMessages((prev) => [...prev, userMsg]);
@@ -184,9 +191,10 @@ export default function ElderMemoryPage() {
     }
   };
 
-  // 이미지 만들기
+  // 이미지 만들기 → 채팅 안에 인라인으로 표시
   const handleGenerateImage = async () => {
-    setStep("generating");
+    if (isGenerating || chatLoading) return;
+    setIsGenerating(true);
 
     try {
       const data = await callMemoryChat({
@@ -198,16 +206,25 @@ export default function ElderMemoryPage() {
 
       if (!data.imageBase64) {
         toast.error("이미지가 생성되지 않았습니다. 다시 시도해주세요.");
-        setStep("chat");
         return;
       }
 
-      setGeneratedImageBase64(data.imageBase64);
-      setGeneratedImageMime(data.imageMimeType ?? "image/png");
-      if (data.restoredImageUrl) setRestoredImageUrl(data.restoredImageUrl);
-      if (data.restorationId) setRestorationId(data.restorationId);
+      const mime = data.imageMimeType ?? "image/png";
 
-      // 히스토리에 이미지 생성 대화도 추가
+      // 이미지를 채팅 말풍선에 추가
+      const aiMsgId = `ai-img-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: aiMsgId,
+          role: "ai",
+          content: data.text,
+          imageBase64: data.imageBase64,
+          imageMimeType: mime,
+        },
+      ]);
+
+      // 히스토리 누적
       const newHistory: ChatTurn[] = [
         ...chatHistory,
         { role: "user", parts: [{ text: "이미지를 생성해주세요." }] },
@@ -215,21 +232,21 @@ export default function ElderMemoryPage() {
       ];
       setChatHistory(newHistory);
 
-      setStep("preview");
+      // 저장 화면용 마지막 이미지 갱신
+      setGeneratedImageBase64(data.imageBase64);
+      setGeneratedImageMime(mime);
+      if (data.restorationId) setRestorationId(data.restorationId);
+
+      setHasGeneratedImage(true);
     } catch (err) {
       toast.error((err as Error).message || "이미지 생성에 실패했습니다.");
-      setStep("chat");
+    } finally {
+      setIsGenerating(false);
     }
   };
 
-  // 재생성 (chat 단계로 돌아가기)
-  const handleRegenerate = () => {
-    setGeneratedImageBase64(null);
-    setStep("chat");
-  };
-
-  // 저장 (이미 API에서 저장됨, UI 완료 처리)
-  const handleSave = () => {
+  // 기억 확정 → saved 화면
+  const handleConfirm = () => {
     setStep("saved");
     toast.success("기억이 소중히 저장되었습니다!");
   };
@@ -300,19 +317,14 @@ export default function ElderMemoryPage() {
     );
   }
 
-  // 분석 중 / 이미지 생성 중 로딩
-  if (step === "analyzing" || step === "generating") {
-    const isGenerating = step === "generating";
+  // 분석 중 로딩
+  if (step === "analyzing") {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6">
         <div className="w-16 h-16 border-4 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
         <div className="text-center space-y-1">
-          <p className="text-xl font-semibold text-foreground">
-            {isGenerating ? "기억을 이미지로 만들고 있어요" : "사진을 살펴보고 있어요"}
-          </p>
-          <p className="text-base text-muted-foreground">
-            {isGenerating ? "잠시만 기다려주세요 (최대 60초)" : "잠시만 기다려주세요..."}
-          </p>
+          <p className="text-xl font-semibold text-foreground">사진을 살펴보고 있어요</p>
+          <p className="text-base text-muted-foreground">잠시만 기다려주세요...</p>
         </div>
         {selectedImage && (
           <div className="relative w-32 h-32 rounded-2xl overflow-hidden shadow-lg opacity-60">
@@ -352,21 +364,47 @@ export default function ElderMemoryPage() {
         {/* 메시지 목록 */}
         <div className="flex-1 overflow-y-auto py-4 space-y-1" role="log">
           {messages.map((msg) => (
-            <ChatMessage key={msg.id} role={msg.role} content={msg.content} />
+            <div key={msg.id}>
+              <ChatMessage role={msg.role} content={msg.content} />
+              {msg.imageBase64 && (
+                <div className="flex justify-start px-1 -mt-2 mb-4">
+                  <div className="ml-11 rounded-2xl overflow-hidden shadow-md border border-violet-200 max-w-[78%]">
+                    <Image
+                      src={`data:${msg.imageMimeType};base64,${msg.imageBase64}`}
+                      alt="복원된 기억 이미지"
+                      width={300}
+                      height={300}
+                      className="object-cover w-full"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           ))}
-          {chatLoading && <ChatMessage role="ai" content="..." />}
+          {(chatLoading || isGenerating) && (
+            <ChatMessage role="ai" content={isGenerating ? "기억을 이미지로 만들고 있어요..." : "..."} />
+          )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* 이미지 만들기 버튼 */}
-        <div className="px-0 pb-2">
+        {/* 하단 버튼 영역 */}
+        <div className="px-0 pb-2 flex flex-col gap-2">
+          {hasGeneratedImage && (
+            <Button
+              onClick={handleConfirm}
+              className="w-full h-12 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-semibold text-base shadow-md"
+            >
+              <Check className="size-5 mr-2" />
+              기억 확정
+            </Button>
+          )}
           <Button
             onClick={handleGenerateImage}
-            disabled={messages.length < 2 || chatLoading}
+            disabled={messages.length < 2 || chatLoading || isGenerating}
             className="w-full h-12 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white font-semibold text-base shadow-md disabled:opacity-40"
           >
             <Sparkles className="size-5 mr-2" />
-            이미지 만들기
+            {isGenerating ? "이미지 만드는 중..." : "이미지 만들기"}
           </Button>
         </div>
 
@@ -378,79 +416,19 @@ export default function ElderMemoryPage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="기억을 이야기해주세요..."
-              disabled={chatLoading}
+              disabled={chatLoading || isGenerating}
               className="flex-1 resize-none text-lg min-h-[52px] max-h-32 rounded-2xl border-border/70 bg-muted/40 focus:bg-white pr-4 pl-4 transition-colors"
               rows={1}
             />
             <Button
               onClick={handleSend}
-              disabled={!input.trim() || chatLoading}
+              disabled={!input.trim() || chatLoading || isGenerating}
               className="h-[52px] w-[52px] rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white flex-shrink-0 shadow-md disabled:opacity-40 transition-all"
               aria-label="메시지 전송"
             >
               <Send className="size-5" />
             </Button>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 미리보기 단계
-  if (step === "preview") {
-    return (
-      <div className="pb-12 space-y-6">
-        <div className="text-center space-y-1 pt-4">
-          <h2 className="text-2xl font-bold text-foreground">기억이 이미지로 태어났어요!</h2>
-          <p className="text-sm text-muted-foreground">저장하거나 다시 만들어보세요</p>
-        </div>
-
-        {/* 원본 vs 생성 이미지 비교 */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground text-center">원본 사진</p>
-            {selectedImage && (
-              <div className="relative aspect-square rounded-2xl overflow-hidden shadow-md">
-                <Image src={selectedImage.image_url} alt="원본 사진" fill className="object-cover" />
-              </div>
-            )}
-          </div>
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-violet-600 text-center font-semibold">복원된 기억</p>
-            {generatedImageBase64 ? (
-              <div className="relative aspect-square rounded-2xl overflow-hidden shadow-lg border-2 border-violet-300">
-                <Image
-                  src={`data:${generatedImageMime};base64,${generatedImageBase64}`}
-                  alt="복원된 기억 이미지"
-                  fill
-                  className="object-cover"
-                />
-              </div>
-            ) : (
-              <div className="aspect-square rounded-2xl bg-muted flex items-center justify-center">
-                <p className="text-sm text-muted-foreground">이미지 없음</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 액션 버튼 */}
-        <div className="flex flex-col gap-3">
-          <Button
-            onClick={handleSave}
-            className="w-full h-14 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white font-bold text-lg shadow-lg"
-          >
-            <Save className="size-5 mr-2" />
-            소중히 저장하기
-          </Button>
-          <Button
-            onClick={handleRegenerate}
-            variant="outline"
-            className="w-full h-12 rounded-2xl border-violet-200 text-violet-600 hover:bg-violet-50 font-semibold"
-          >
-            <RefreshCw className="size-4 mr-2" />
-            다시 만들기
-          </Button>
         </div>
       </div>
     );
