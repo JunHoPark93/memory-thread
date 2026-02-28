@@ -16,6 +16,11 @@ interface Message {
   content: string;
 }
 
+interface ChatTurn {
+  role: "user" | "model";
+  parts: Array<{ text: string }>;
+}
+
 // 초기 AI 인사 메시지
 const INITIAL_MESSAGE: Message = {
   id: "init",
@@ -26,6 +31,7 @@ const INITIAL_MESSAGE: Message = {
 // 어르신 AI 채팅 페이지
 export default function ElderChatPage() {
   const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE]);
+  const [chatHistory, setChatHistory] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
   const [liveStatus, setLiveStatus] = useState("라이브 연결 안 됨");
   const [isLiveConnected, setIsLiveConnected] = useState(false);
@@ -90,10 +96,16 @@ export default function ElderChatPage() {
     setLoading(true);
 
     try {
+      const historyForText = buildHistoryWithLiveBuffer(chatHistory);
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ elderId, sessionId, content: trimmed }),
+        body: JSON.stringify({
+          elderId,
+          sessionId,
+          content: trimmed,
+          history: historyForText,
+        }),
       });
 
       const data = await res.json();
@@ -115,6 +127,11 @@ export default function ElderChatPage() {
         content: data.reply,
       };
       setMessages((prev) => [...prev, aiMessage]);
+      setChatHistory([
+        ...historyForText,
+        { role: "user", parts: [{ text: trimmed }] },
+        { role: "model", parts: [{ text: data.reply }] },
+      ]);
 
       // 포인트 획득 알림
       if (data.newPoints !== null && data.newPoints !== undefined) {
@@ -177,6 +194,7 @@ export default function ElderChatPage() {
             setLiveStatus("라이브 연결 오류");
           },
           onclose: (event) => {
+            finalizeLiveTurnToHistory();
             flushLiveTurnsToDb();
             resetLiveTurnState();
             liveSessionRef.current = null;
@@ -204,6 +222,7 @@ export default function ElderChatPage() {
 
   const disconnectLive = () => {
     shouldReconnectRef.current = false;
+    finalizeLiveTurnToHistory();
     flushLiveTurnsToDb();
     if (liveSessionRef.current) {
       liveSessionRef.current.close();
@@ -334,6 +353,7 @@ export default function ElderChatPage() {
     }
 
     if (serverContent.turnComplete) {
+      finalizeLiveTurnToHistory();
       flushLiveTurnsToDb();
       resetLiveTurnState();
     }
@@ -407,6 +427,34 @@ export default function ElderChatPage() {
     liveAiTurnMessageIdRef.current = null;
     liveAiTurnDisplayTextRef.current = "";
     liveAiTurnRawTextRef.current = "";
+  };
+
+  const finalizeLiveTurnToHistory = () => {
+    const userText = liveUserTurnDisplayTextRef.current.trim();
+    const aiText = liveAiTurnDisplayTextRef.current.trim();
+    if (!userText && !aiText) return;
+
+    setChatHistory((prev) => {
+      const next = [...prev];
+      if (userText) next.push({ role: "user", parts: [{ text: userText }] });
+      if (aiText) next.push({ role: "model", parts: [{ text: aiText }] });
+      return next;
+    });
+  };
+
+  const buildHistoryWithLiveBuffer = (baseHistory: ChatTurn[]) => {
+    const snapshot = [...baseHistory];
+    const pendingUserText = liveUserTurnDisplayTextRef.current.trim();
+    const pendingAiText = liveAiTurnDisplayTextRef.current.trim();
+
+    if (pendingUserText) {
+      snapshot.push({ role: "user", parts: [{ text: pendingUserText }] });
+    }
+    if (pendingAiText) {
+      snapshot.push({ role: "model", parts: [{ text: pendingAiText }] });
+    }
+
+    return snapshot;
   };
 
   const flushLiveTurnToDb = async (role: "ai" | "user", content: string) => {
