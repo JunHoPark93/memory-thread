@@ -1,33 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/_lib/supabase";
 
-// 특정 어르신 정보 API
+// 특정 어르신 정보 조회 (포인트·뱃지 포함)
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ elderId: string }> }
 ) {
-  // TODO: 특정 어르신 정보 조회
   const { elderId } = await params;
-  void elderId;
-  return NextResponse.json({ message: "TODO" });
+
+  const { data, error } = await supabase
+    .from("elders")
+    .select("id, name, total_points, badge_count")
+    .eq("id", elderId)
+    .single();
+
+  if (error || !data) {
+    return NextResponse.json({ error: "어르신 정보를 찾을 수 없습니다." }, { status: 404 });
+  }
+
+  return NextResponse.json(data);
 }
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ elderId: string }> }
 ) {
-  // TODO: 어르신 정보 수정 (이름, PIN 등)
   const { elderId } = await params;
-  void elderId;
-  void request;
-  return NextResponse.json({ message: "TODO" });
+  const body = await request.json();
+
+  const { error } = await supabase
+    .from("elders")
+    .update(body)
+    .eq("id", elderId);
+
+  if (error) {
+    return NextResponse.json({ error: "수정에 실패했습니다." }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
 }
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ elderId: string }> }
 ) {
-  // TODO: 어르신 삭제
   const { elderId } = await params;
-  void elderId;
-  return NextResponse.json({ message: "TODO" });
+
+  const { error } = await supabase
+    .from("elders")
+    .delete()
+    .eq("id", elderId);
+
+  if (error) {
+    return NextResponse.json({ error: "삭제에 실패했습니다." }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
 }

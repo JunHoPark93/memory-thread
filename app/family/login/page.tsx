@@ -13,6 +13,7 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { ChevronLeft } from "lucide-react";
+import { setFamilySession } from "@/app/_lib/session";
 
 // 가족 ID/PW 로그인 페이지
 export default function FamilyLoginPage() {
@@ -20,9 +21,9 @@ export default function FamilyLoginPage() {
   const [id, setId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // mock 로그인 핸들러
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!id.trim() || !password.trim()) {
@@ -30,8 +31,30 @@ export default function FamilyLoginPage() {
       return;
     }
 
-    // mock: 어떤 값이든 로그인 성공으로 처리
-    router.push("/family/dashboard");
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/auth/family", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: id.trim(), password: password.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error ?? "로그인에 실패했습니다.");
+        return;
+      }
+
+      setFamilySession(data.id, data.name);
+      router.push("/family/dashboard");
+    } catch {
+      setError("서버 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -45,10 +68,8 @@ export default function FamilyLoginPage() {
         뒤로가기
       </Link>
 
-      {/* 로그인 카드 - 세련된 그림자 + 테두리 */}
       <Card className="shadow-xl border-border/60 rounded-3xl overflow-hidden">
         <CardHeader className="pb-4 pt-8 px-7 bg-gradient-to-b from-orange-50/60 to-transparent">
-          {/* 브랜드 로고 */}
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-md">
               <span className="text-xl" role="img" aria-hidden="true">🧵</span>
@@ -64,20 +85,14 @@ export default function FamilyLoginPage() {
           <form onSubmit={handleLogin} className="space-y-4">
             {/* 아이디 입력 */}
             <div className="space-y-1.5">
-              <label
-                htmlFor="login-id"
-                className="text-sm font-medium text-foreground"
-              >
+              <label htmlFor="login-id" className="text-sm font-medium text-foreground">
                 아이디
               </label>
               <Input
                 id="login-id"
                 type="text"
                 value={id}
-                onChange={(e) => {
-                  setId(e.target.value);
-                  setError("");
-                }}
+                onChange={(e) => { setId(e.target.value); setError(""); }}
                 placeholder="아이디를 입력하세요"
                 autoComplete="username"
                 className="h-11 rounded-xl border-border/70 bg-muted/30 focus:bg-white transition-colors"
@@ -86,20 +101,14 @@ export default function FamilyLoginPage() {
 
             {/* 비밀번호 입력 */}
             <div className="space-y-1.5">
-              <label
-                htmlFor="login-password"
-                className="text-sm font-medium text-foreground"
-              >
+              <label htmlFor="login-password" className="text-sm font-medium text-foreground">
                 비밀번호
               </label>
               <Input
                 id="login-password"
                 type="password"
                 value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setError("");
-                }}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
                 placeholder="비밀번호를 입력하세요"
                 autoComplete="current-password"
                 className="h-11 rounded-xl border-border/70 bg-muted/30 focus:bg-white transition-colors"
@@ -111,13 +120,14 @@ export default function FamilyLoginPage() {
               <p className="text-destructive text-sm font-medium" role="alert">{error}</p>
             )}
 
-            {/* 로그인 버튼 - 그라디언트 */}
+            {/* 로그인 버튼 */}
             <Button
               type="submit"
-              className="w-full h-11 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all duration-200"
+              disabled={loading}
+              className="w-full h-11 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all duration-200 disabled:opacity-60"
               size="lg"
             >
-              로그인
+              {loading ? "로그인 중..." : "로그인"}
             </Button>
           </form>
         </CardContent>
