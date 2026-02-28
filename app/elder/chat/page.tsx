@@ -1,18 +1,24 @@
 "use client";
 
-import { useState, useRef, useEffect, type MutableRefObject } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send } from "lucide-react";
 import { toast } from "sonner";
 import ChatMessage from "@/app/_components/ChatMessage";
 import { getElderSession, getElderName } from "@/app/_lib/session";
+import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
 
 // 메시지 타입 정의
 interface Message {
   id: string;
   role: "ai" | "user";
   content: string;
+}
+
+interface ChatTurn {
+  role: "user" | "model";
+  parts: Array<{ text: string }>;
 }
 
 // 초기 AI 인사 메시지
@@ -25,8 +31,8 @@ const INITIAL_MESSAGE: Message = {
 // 어르신 AI 채팅 페이지
 export default function ElderChatPage() {
   const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE]);
+  const [chatHistory, setChatHistory] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
-  const [userMessageCount, setUserMessageCount] = useState(0);
   const [liveStatus, setLiveStatus] = useState("라이브 연결 안 됨");
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
@@ -35,8 +41,7 @@ export default function ElderChatPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [elderName, setElderName] = useState<string>("어르신");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const pingTimerRef = useRef<number | null>(null);
+  const liveSessionRef = useRef<Session | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const shouldReconnectRef = useRef(false);
@@ -48,8 +53,12 @@ export default function ElderChatPage() {
   const silenceRef = useRef<GainNode | null>(null);
   const playbackCtxRef = useRef<AudioContext | null>(null);
   const playbackTimeRef = useRef(0);
-  const liveUserIdRef = useRef<string | null>(null);
-  const liveAiIdRef = useRef<string | null>(null);
+  const liveUserTurnMessageIdRef = useRef<string | null>(null);
+  const liveUserTurnDisplayTextRef = useRef("");
+  const liveUserTurnRawTextRef = useRef("");
+  const liveAiTurnMessageIdRef = useRef<string | null>(null);
+  const liveAiTurnDisplayTextRef = useRef("");
+  const liveAiTurnRawTextRef = useRef("");
 
   // 세션 초기화
   useEffect(() => {
@@ -68,6 +77,7 @@ export default function ElderChatPage() {
     return () => {
       disconnectLive();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 메시지 전송 핸들러
@@ -86,10 +96,16 @@ export default function ElderChatPage() {
     setLoading(true);
 
     try {
+      const historyForText = buildHistoryWithLiveBuffer(chatHistory);
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ elderId, sessionId, content: trimmed }),
+        body: JSON.stringify({
+          elderId,
+          sessionId,
+          content: trimmed,
+          history: historyForText,
+        }),
       });
 
       const data = await res.json();
@@ -111,6 +127,11 @@ export default function ElderChatPage() {
         content: data.reply,
       };
       setMessages((prev) => [...prev, aiMessage]);
+      setChatHistory([
+        ...historyForText,
+        { role: "user", parts: [{ text: trimmed }] },
+        { role: "model", parts: [{ text: data.reply }] },
+      ]);
 
       // 포인트 획득 알림
       if (data.newPoints !== null && data.newPoints !== undefined) {
@@ -126,100 +147,96 @@ export default function ElderChatPage() {
     }
   };
 
-  const connectLive = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+  const connectLive = async () => {
+    if (!elderId) {
+      toast.error("라이브 연결 전에 로그인 상태를 확인해 주세요.");
+      return;
+    }
+    if (liveSessionRef.current) return;
     shouldReconnectRef.current = true;
-    const protocol = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${protocol}://${location.host}/live`);
-    wsRef.current = ws;
-
     setLiveStatus("라이브 연결 중...");
 
-    ws.onopen = () => {
-      setIsLiveConnected(true);
-      setLiveStatus("라이브 연결됨");
-      reconnectAttemptsRef.current = 0;
-      startPing();
-      if (wantMicRef.current && !isMicOn) {
-        startMic();
+    try {
+      const tokenRes = await fetch("/api/live/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ elderId, elderName })
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData?.token || !tokenData?.model) {
+        setLiveStatus(`오류: ${tokenData?.error || "토큰 발급 실패"}`);
+        return;
       }
-    };
 
-    ws.onclose = (event) => {
-      setIsLiveConnected(false);
-      setIsMicOn(false);
-      setLiveStatus(
-        `라이브 연결 끊김 (code ${event.code}${event.reason ? `: ${event.reason}` : ""})`
-      );
-      stopPing();
-      stopMic();
+      const ai = new GoogleGenAI({
+        apiKey: tokenData.token,
+        httpOptions: { apiVersion: "v1alpha" }
+      });
+
+      const session = await ai.live.connect({
+        model: tokenData.model,
+        config: {
+          responseModalities: [Modality.AUDIO]
+        },
+        callbacks: {
+          onopen: () => {
+            setLiveStatus("라이브 준비 완료");
+            setIsLiveConnected(true);
+            reconnectAttemptsRef.current = 0;
+            if (wantMicRef.current && !isMicOn) {
+              startMic();
+            }
+          },
+          onmessage: (msg) => {
+            handleLiveServerMessage(msg);
+          },
+          onerror: () => {
+            setLiveStatus("라이브 연결 오류");
+          },
+          onclose: (event) => {
+            finalizeLiveTurnToHistory();
+            flushLiveTurnsToDb();
+            resetLiveTurnState();
+            liveSessionRef.current = null;
+            setIsLiveConnected(false);
+            setIsMicOn(false);
+            setLiveStatus(
+              `라이브 연결 끊김 (code ${event.code}${event.reason ? `: ${event.reason}` : ""})`
+            );
+            stopMic();
+            if (shouldReconnectRef.current) {
+              scheduleReconnect();
+            }
+          }
+        }
+      });
+
+      liveSessionRef.current = session;
+    } catch {
+      setLiveStatus("라이브 연결 실패");
       if (shouldReconnectRef.current) {
         scheduleReconnect();
       }
-    };
-
-    ws.onerror = (event) => {
-      setLiveStatus(`라이브 연결 오류`);
-    };
-
-    ws.onmessage = (event) => {
-      let msg: any;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-
-      if (msg.type === "ready") {
-        setLiveStatus("라이브 준비 완료");
-        return;
-      }
-
-      if (msg.type === "pong") {
-        return;
-      }
-
-      if (msg.type === "error") {
-        setLiveStatus(`오류: ${msg.error || "알 수 없음"}`);
-        return;
-      }
-
-      if (msg.type === "interrupted") {
-        resetPlayback();
-        return;
-      }
-
-      if (msg.type === "input_transcript") {
-        upsertLiveMessage("user", msg.text || "", liveUserIdRef);
-        return;
-      }
-
-      if (msg.type === "output_transcript") {
-        upsertLiveMessage("ai", msg.text || "", liveAiIdRef);
-        return;
-      }
-
-      if (msg.type === "audio" && msg.data) {
-        playPcmChunk(msg.data, msg.mimeType || "audio/pcm;rate=24000");
-      }
-    };
+    }
   };
 
   const disconnectLive = () => {
     shouldReconnectRef.current = false;
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    finalizeLiveTurnToHistory();
+    flushLiveTurnsToDb();
+    if (liveSessionRef.current) {
+      liveSessionRef.current.close();
+      liveSessionRef.current = null;
     }
-    liveUserIdRef.current = null;
-    liveAiIdRef.current = null;
-    stopPing();
+    resetLiveTurnState();
     stopReconnect();
     stopMic();
+    setIsLiveConnected(false);
+    setLiveStatus("라이브 연결 안 됨");
   };
 
   const startMic = async () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!liveSessionRef.current) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setLiveStatus("이 브라우저는 마이크를 지원하지 않습니다");
       return;
@@ -250,15 +267,14 @@ export default function ElderChatPage() {
       const inputData = e.inputBuffer.getChannelData(0);
       const downsampled = downsampleBuffer(inputData, inputCtx.sampleRate, 16000);
       const int16 = floatTo16BitPCM(downsampled);
-      const base64 = arrayBufferToBase64(int16.buffer);
-      if (base64 && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "audio",
-            data: base64,
-            mimeType: "audio/pcm;rate=16000",
-          })
-        );
+      const session = liveSessionRef.current;
+      if (session) {
+        session.sendRealtimeInput({
+          audio: {
+            data: arrayBufferToBase64(int16.buffer),
+            mimeType: "audio/pcm;rate=16000"
+          }
+        });
       }
     };
 
@@ -272,6 +288,9 @@ export default function ElderChatPage() {
 
   const stopMic = () => {
     wantMicRef.current = false;
+    if (liveSessionRef.current) {
+      liveSessionRef.current.sendRealtimeInput({ audioStreamEnd: true });
+    }
     if (micStreamRef.current) {
       micStreamRef.current.getTracks().forEach((track) => track.stop());
       micStreamRef.current = null;
@@ -295,22 +314,6 @@ export default function ElderChatPage() {
     }
   };
 
-  const startPing = () => {
-    stopPing();
-    pingTimerRef.current = window.setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "ping" }));
-      }
-    }, 15000);
-  };
-
-  const stopPing = () => {
-    if (pingTimerRef.current) {
-      window.clearInterval(pingTimerRef.current);
-      pingTimerRef.current = null;
-    }
-  };
-
   const scheduleReconnect = () => {
     if (reconnectTimerRef.current) return;
     const attempt = reconnectAttemptsRef.current + 1;
@@ -331,22 +334,163 @@ export default function ElderChatPage() {
     reconnectAttemptsRef.current = 0;
   };
 
-  const upsertLiveMessage = (
-    role: "ai" | "user",
-    text: string,
-    idRef: MutableRefObject<string | null>
-  ) => {
-    if (!text) return;
-    if (!idRef.current) {
+  const handleLiveServerMessage = (msg: LiveServerMessage) => {
+    const serverContent = msg.serverContent;
+    if (!serverContent) return;
+
+    if (serverContent.interrupted) {
+      resetPlayback();
+    }
+
+    const inputText = serverContent.inputTranscription?.text;
+    if (inputText) {
+      appendLiveMessage("user", inputText);
+    }
+
+    const outputText = serverContent.outputTranscription?.text;
+    if (outputText) {
+      appendLiveMessage("ai", outputText);
+    }
+
+    if (serverContent.turnComplete) {
+      finalizeLiveTurnToHistory();
+      flushLiveTurnsToDb();
+      resetLiveTurnState();
+    }
+
+    const parts = serverContent.modelTurn?.parts;
+    if (!parts) return;
+
+    for (const part of parts) {
+      const inline = part.inlineData;
+      if (inline?.data) {
+        playPcmChunk(inline.data, inline.mimeType || "audio/pcm;rate=24000");
+      }
+    }
+  };
+
+  const appendLiveMessage = (role: "ai" | "user", rawText: string) => {
+    if (!rawText) return;
+    const refs =
+      role === "ai"
+        ? {
+            idRef: liveAiTurnMessageIdRef,
+            displayRef: liveAiTurnDisplayTextRef,
+            rawRef: liveAiTurnRawTextRef,
+          }
+        : {
+            idRef: liveUserTurnMessageIdRef,
+            displayRef: liveUserTurnDisplayTextRef,
+            rawRef: liveUserTurnRawTextRef,
+          };
+
+    if (!refs.idRef.current) {
       const id = `live-${role}-${Date.now()}`;
-      idRef.current = id;
-      setMessages((prev) => [...prev, { id, role, content: text }]);
+      refs.idRef.current = id;
+      refs.rawRef.current = rawText;
+      refs.displayRef.current = rawText;
+      setMessages((prev) => [...prev, { id, role, content: rawText }]);
       return;
     }
-    const id = idRef.current;
+
+    const previousRaw = refs.rawRef.current;
+    const previousDisplay = refs.displayRef.current;
+    let delta = "";
+
+    // 1) 누적 전문(full transcript) 형식
+    if (rawText.startsWith(previousRaw)) {
+      delta = rawText.slice(previousRaw.length);
+    } else if (previousDisplay.endsWith(rawText)) {
+      // 2) 동일 조각 재수신(중복) 형식
+      delta = "";
+    } else {
+      // 3) 조각(chunk) 형식: 같은 턴 버블에 계속 이어붙임
+      delta = rawText;
+    }
+
+    if (!delta) return;
+
+    const nextDisplay = `${previousDisplay}${delta}`;
+    refs.rawRef.current = rawText;
+    refs.displayRef.current = nextDisplay;
+
+    const id = refs.idRef.current;
     setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, content: text } : m))
+      prev.map((m) => (m.id === id ? { ...m, content: nextDisplay } : m))
     );
+  };
+
+  const resetLiveTurnState = () => {
+    liveUserTurnMessageIdRef.current = null;
+    liveUserTurnDisplayTextRef.current = "";
+    liveUserTurnRawTextRef.current = "";
+    liveAiTurnMessageIdRef.current = null;
+    liveAiTurnDisplayTextRef.current = "";
+    liveAiTurnRawTextRef.current = "";
+  };
+
+  const finalizeLiveTurnToHistory = () => {
+    const userText = liveUserTurnDisplayTextRef.current.trim();
+    const aiText = liveAiTurnDisplayTextRef.current.trim();
+    if (!userText && !aiText) return;
+
+    setChatHistory((prev) => {
+      const next = [...prev];
+      if (userText) next.push({ role: "user", parts: [{ text: userText }] });
+      if (aiText) next.push({ role: "model", parts: [{ text: aiText }] });
+      return next;
+    });
+  };
+
+  const buildHistoryWithLiveBuffer = (baseHistory: ChatTurn[]) => {
+    const snapshot = [...baseHistory];
+    const pendingUserText = liveUserTurnDisplayTextRef.current.trim();
+    const pendingAiText = liveAiTurnDisplayTextRef.current.trim();
+
+    if (pendingUserText) {
+      snapshot.push({ role: "user", parts: [{ text: pendingUserText }] });
+    }
+    if (pendingAiText) {
+      snapshot.push({ role: "model", parts: [{ text: pendingAiText }] });
+    }
+
+    return snapshot;
+  };
+
+  const flushLiveTurnToDb = async (role: "ai" | "user", content: string) => {
+    if (!elderId || !content.trim()) {
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          elderId,
+          sessionId,
+          role: role === "ai" ? "assistant" : "user",
+          content: content.trim(),
+        }),
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.sessionId && !sessionId) {
+        setSessionId(data.sessionId);
+      }
+    } catch {
+      // 라이브 UX를 우선하기 위해 저장 실패는 무시합니다.
+    }
+  };
+
+  const flushLiveTurnsToDb = () => {
+    if (liveUserTurnDisplayTextRef.current.trim()) {
+      void flushLiveTurnToDb("user", liveUserTurnDisplayTextRef.current);
+    }
+    if (liveAiTurnDisplayTextRef.current.trim()) {
+      void flushLiveTurnToDb("ai", liveAiTurnDisplayTextRef.current);
+    }
   };
 
   const playPcmChunk = (base64: string, mimeType: string) => {
@@ -518,6 +662,6 @@ function pcm16ToFloat32(bytes: Uint8Array) {
 }
 
 function parseSampleRate(mimeType: string) {
-  const match = /rate=(\\d+)/.exec(mimeType || "");
+  const match = /rate=(\d+)/.exec(mimeType || "");
   return match ? Number(match[1]) : null;
 }

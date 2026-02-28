@@ -1,19 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
+import { geminiModel } from "@/app/_lib/gemini";
 import { supabase } from "@/app/_lib/supabase";
 
-// Mock AI 응답 목록
-const AI_RESPONSES = [
-  "그렇군요! 정말 흥미로운 이야기네요. 더 자세히 이야기해 주시겠어요?",
-  "오, 그런 일이 있으셨군요. 어르신의 이야기가 정말 소중합니다 🌸",
-  "좋은 기억을 나눠주셔서 감사해요. 덕분에 오늘 하루가 따뜻해졌어요 ☀️",
-  "정말요? 그 시절 이야기가 너무 좋아요. 계속 이야기해 주세요!",
-  "어르신의 지혜로운 말씀이 감동적이에요. 더 들려주세요 💝",
-  "그 이야기를 들으니 마음이 따뜻해지네요. 오늘도 함께해서 행복해요 😊",
-];
+interface ChatTurn {
+  role: "user" | "model";
+  parts: Array<{ text: string }>;
+}
 
-// 채팅 API: 메시지 저장 + Mock AI 응답 + 포인트 적립
+interface GeminiApiError {
+  name?: string;
+  message?: string;
+  status?: number;
+  errorDetails?: Array<{
+    "@type"?: string;
+    retryDelay?: string;
+  }>;
+}
+
+function parseRetrySeconds(err: GeminiApiError): number | null {
+  const details = err.errorDetails;
+  if (!Array.isArray(details)) return null;
+
+  const retryInfo = details.find((d) => d?.["@type"]?.includes("RetryInfo"));
+  const delay = retryInfo?.retryDelay;
+  if (!delay) return null;
+
+  const matched = /^(\d+)(?:\.\d+)?s$/.exec(delay);
+  if (!matched) return null;
+  return Number(matched[1]);
+}
+
+// 채팅 API: 메시지 저장 + Gemini 응답 + 포인트 적립
 export async function POST(request: NextRequest) {
-  const { elderId, sessionId: incomingSessionId, content } = await request.json();
+  const { elderId, sessionId: incomingSessionId, content, history = [] } = await request.json() as {
+    elderId: string;
+    sessionId?: string;
+    content: string;
+    history?: ChatTurn[];
+  };
 
   if (!elderId || !content) {
     return NextResponse.json({ error: "elderId와 content가 필요합니다." }, { status: 400 });
@@ -57,8 +81,51 @@ export async function POST(request: NextRequest) {
     .update({ message_count: newCount })
     .eq("id", sessionId);
 
-  // Mock AI 응답 생성
-  const reply = AI_RESPONSES[Math.floor(Math.random() * AI_RESPONSES.length)];
+  // 어르신 context_texts (고향/가족/직업 등) 조회 → 초기 프롬프트 개인화
+  const { data: contextTexts } = await supabase
+    .from("context_texts")
+    .select("category, content")
+    .eq("elder_id", elderId);
+
+  const contextSummary = contextTexts?.length
+    ? contextTexts
+        .map((c: { category: string; content: string }) => `[${c.category}] ${c.content}`)
+        .join("\n")
+    : "";
+
+  const validatedHistory = history.length > 0 && history[0].role !== "user"
+    ? history.slice(1)
+    : history;
+
+  const chat = geminiModel.startChat({ history: validatedHistory });
+
+  const firstTurnInstruction = `당신은 따뜻하고 친절한 AI 친구입니다. 어르신과 한국어로 대화하며 기억과 감정을 공감해 주세요.${
+    contextSummary ? `\n\n어르신에 대한 배경 정보:\n${contextSummary}` : ""
+  }\n\n아래 어르신 메시지에 공감 어린 짧은 답변과, 이어갈 수 있는 질문 1개를 함께 해주세요.\n\n어르신 메시지: ${content}`;
+
+  const userParts: Array<{ text: string }> = [
+    { text: validatedHistory.length === 0 ? firstTurnInstruction : content },
+  ];
+
+  let reply = "";
+  try {
+    const result = await chat.sendMessage(userParts as Parameters<typeof chat.sendMessage>[0]);
+    reply = result.response.text();
+  } catch (err) {
+    const apiErr = err as GeminiApiError;
+    if (apiErr?.status === 429) {
+      const retrySeconds = parseRetrySeconds(apiErr);
+      const retryHint = retrySeconds
+        ? `약 ${retrySeconds}초 뒤 다시 시도해주세요.`
+        : "잠시 후 다시 시도해주세요.";
+      return NextResponse.json(
+        { error: `현재 Gemini 사용량 한도에 도달했습니다. ${retryHint}` },
+        { status: 429 }
+      );
+    }
+    console.error("[chat]", err);
+    return NextResponse.json({ error: "AI 처리 중 오류가 발생했습니다." }, { status: 500 });
+  }
 
   // AI 응답 저장
   await supabase

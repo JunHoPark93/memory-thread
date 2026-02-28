@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import PinKeypad from "@/app/_components/PinKeypad";
 import { setElderSession } from "@/app/_lib/session";
@@ -10,9 +10,12 @@ import { setElderSession } from "@/app/_lib/session";
 // PIN 최대 자리수
 const PIN_MAX_LENGTH = 4;
 
-// 어르신 PIN 로그인 페이지
-export default function ElderLoginPage() {
+// 실제 로그인 로직 (useSearchParams 사용)
+function ElderLoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next");
+
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -59,7 +62,8 @@ export default function ElderLoginPage() {
       }
 
       setElderSession(data.id, data.name);
-      router.push("/elder/chat");
+      // next 파라미터에 따라 리디렉션
+      router.push(next === "memory" ? "/elder/memory" : "/elder/chat");
     } catch {
       setError("서버 오류가 발생했습니다.");
       setPin("");
@@ -129,5 +133,14 @@ export default function ElderLoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams는 Suspense 경계 필요
+export default function ElderLoginPage() {
+  return (
+    <Suspense fallback={<div className="pt-8 text-center text-muted-foreground">로딩 중...</div>}>
+      <ElderLoginContent />
+    </Suspense>
   );
 }
