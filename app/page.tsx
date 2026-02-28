@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, MessageCircle, Users } from "lucide-react";
+import { ArrowRight, MessageCircle, Users, Sparkles } from "lucide-react";
 
 // 홈 페이지 - 풀스크린 히어로 + 세련된 진입 카드
 export default function HomePage() {
@@ -49,21 +49,40 @@ export default function HomePage() {
 
         {/* 진입 카드 영역 */}
         <div className="flex flex-col gap-3 w-full">
-          {/* 어르신 로그인 카드 */}
+          {/* 대화하기 카드 */}
           <Link
-            href="/elder/login"
+            href="/elder/login?next=chat"
             className="group relative overflow-hidden rounded-2xl p-5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer"
-            aria-label="어르신 로그인 페이지로 이동"
+            aria-label="AI 대화하기 페이지로 이동"
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                {/* 아이콘 컨테이너 */}
                 <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
                   <MessageCircle className="size-6 text-white" />
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-white">어르신 로그인</p>
-                  <p className="text-sm text-white/75">PIN으로 간편하게 입장</p>
+                  <p className="text-lg font-bold text-white">대화하기</p>
+                  <p className="text-sm text-white/75">AI 친구와 오늘의 이야기</p>
+                </div>
+              </div>
+              <ArrowRight className="size-5 text-white/60 group-hover:translate-x-0.5 transition-transform" />
+            </div>
+          </Link>
+
+          {/* 기억복원 카드 */}
+          <Link
+            href="/elder/login?next=memory"
+            className="group relative overflow-hidden rounded-2xl p-5 bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer"
+            aria-label="기억복원 페이지로 이동"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                  <Sparkles className="size-6 text-white" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-white">기억복원</p>
+                  <p className="text-sm text-white/75">사진 속 기억을 되살려요</p>
                 </div>
               </div>
               <ArrowRight className="size-5 text-white/60 group-hover:translate-x-0.5 transition-transform" />
