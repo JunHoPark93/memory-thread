@@ -49,48 +49,57 @@ export default function ElderLoginPage() {
       {/* 뒤로가기 링크 */}
       <Link
         href="/"
-        className="inline-flex items-center gap-1 text-orange-600 text-lg mb-8"
+        className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-base font-medium mb-8 transition-colors"
       >
         <ChevronLeft className="size-5" />
         뒤로가기
       </Link>
 
-      {/* 안내 텍스트 */}
-      <h1 className="text-3xl font-bold text-gray-800 text-center mb-10">
-        PIN 번호를 입력하세요
-      </h1>
+      {/* 글래스모피즘 카드 */}
+      <div className="glass rounded-3xl p-8 shadow-xl border border-white/40 space-y-8">
+        {/* 안내 텍스트 */}
+        <div className="text-center space-y-1">
+          <h1 className="text-3xl font-bold text-foreground">
+            PIN 번호 입력
+          </h1>
+          <p className="text-base text-muted-foreground">4자리 숫자를 눌러주세요</p>
+        </div>
 
-      {/* PIN 표시 영역 (●로 표시) */}
-      <div className="flex justify-center gap-4 mb-10">
-        {Array.from({ length: PIN_MAX_LENGTH }).map((_, index) => (
-          <div
-            key={index}
-            className={`w-14 h-14 rounded-full border-3 flex items-center justify-center text-3xl transition-all ${
-              index < pin.length
-                ? "bg-orange-500 border-orange-500 text-white"
-                : "bg-white border-orange-300 text-transparent"
-            }`}
-          >
-            {index < pin.length ? "●" : "○"}
-          </div>
-        ))}
-      </div>
+        {/* PIN 표시 영역 - 세련된 원형 인디케이터 */}
+        <div className="flex justify-center gap-5" role="status" aria-label={`PIN ${pin.length}자리 입력됨`}>
+          {Array.from({ length: PIN_MAX_LENGTH }).map((_, index) => (
+            <div
+              key={index}
+              className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 ${
+                index < pin.length
+                  ? "bg-gradient-to-br from-orange-500 to-amber-500 shadow-lg glow-amber scale-110"
+                  : "bg-white border-2 border-border"
+              }`}
+              aria-hidden="true"
+            >
+              {index < pin.length && (
+                <div className="w-3.5 h-3.5 rounded-full bg-white" />
+              )}
+            </div>
+          ))}
+        </div>
 
-      {/* 에러 메시지 영역 */}
-      {error && (
-        <p className="text-red-500 text-center text-lg mb-6 font-medium">
-          {error}
-        </p>
-      )}
+        {/* 에러 메시지 영역 */}
+        {error && (
+          <p className="text-destructive text-center text-base font-medium" role="alert">
+            {error}
+          </p>
+        )}
 
-      {/* PIN 키패드 */}
-      <div className="flex justify-center">
-        <PinKeypad
-          onDigit={handleDigit}
-          onDelete={handleDelete}
-          onComplete={handleComplete}
-          currentPin={pin}
-        />
+        {/* PIN 키패드 */}
+        <div className="flex justify-center">
+          <PinKeypad
+            onDigit={handleDigit}
+            onDelete={handleDelete}
+            onComplete={handleComplete}
+            currentPin={pin}
+          />
+        </div>
       </div>
     </div>
   );

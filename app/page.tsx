@@ -1,50 +1,100 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { ArrowRight, MessageCircle, Users } from "lucide-react";
 
-// 홈 페이지 - 어르신/가족 진입 선택
+// 홈 페이지 - 풀스크린 히어로 + 세련된 진입 카드
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-orange-50 to-amber-50 flex flex-col items-center justify-center px-6">
-      <div className="max-w-md w-full flex flex-col items-center gap-8">
+    <div className="relative min-h-screen bg-gradient-to-br from-orange-50 via-amber-50/60 to-white overflow-hidden flex flex-col items-center justify-center px-6">
+      {/* 배경 도트 패턴 */}
+      <div className="absolute inset-0 bg-dot-pattern opacity-60 pointer-events-none" />
+
+      {/* 배경 그라디언트 블롭 */}
+      <div
+        className="absolute top-[-10%] right-[-5%] w-80 h-80 rounded-full opacity-20 blur-3xl pointer-events-none"
+        style={{ background: "radial-gradient(circle, #f97316, #f59e0b)" }}
+        aria-hidden="true"
+      />
+      <div
+        className="absolute bottom-[-10%] left-[-5%] w-64 h-64 rounded-full opacity-15 blur-3xl pointer-events-none"
+        style={{ background: "radial-gradient(circle, #fb923c, #fbbf24)" }}
+        aria-hidden="true"
+      />
+
+      <div className="relative z-10 max-w-sm w-full flex flex-col items-center gap-10">
         {/* 앱 로고 영역 */}
-        <div className="flex flex-col items-center gap-4">
-          <span className="text-8xl">🧵</span>
-          <h1 className="text-4xl font-bold text-orange-800 tracking-tight">
-            기억의 실
-          </h1>
-          <p className="text-xl text-orange-600 text-center leading-relaxed">
-            소중한 기억을 대화로 이어가세요
-          </p>
+        <div className="flex flex-col items-center gap-5">
+          {/* 로고 아이콘 - 글래스모피즘 원형 */}
+          <div className="w-24 h-24 rounded-3xl glass flex items-center justify-center shadow-xl glow-amber">
+            <span className="text-5xl" role="img" aria-label="기억의 실 로고">🧵</span>
+          </div>
+
+          {/* 앱 이름 - 그라디언트 텍스트 */}
+          <div className="text-center space-y-2">
+            <h1 className="text-5xl font-bold tracking-tight text-gradient-amber">
+              기억의 실
+            </h1>
+            <p className="text-base text-muted-foreground leading-relaxed">
+              AI와의 대화로 소중한 기억을 이어가세요
+            </p>
+          </div>
         </div>
 
         {/* 구분선 */}
-        <div className="w-full h-px bg-orange-200" />
+        <div className="w-full flex items-center gap-3">
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+          <span className="text-xs text-muted-foreground/60 font-medium uppercase tracking-wider">시작하기</span>
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        </div>
 
-        {/* 진입 버튼 영역 */}
-        <div className="flex flex-col gap-4 w-full">
-          {/* 어르신 로그인 버튼 (크게, orange 배경) */}
-          <Button
-            asChild
-            className="h-16 text-xl font-bold bg-orange-500 hover:bg-orange-600 text-white rounded-2xl shadow-lg"
+        {/* 진입 카드 영역 */}
+        <div className="flex flex-col gap-3 w-full">
+          {/* 어르신 로그인 카드 */}
+          <Link
+            href="/elder/login"
+            className="group relative overflow-hidden rounded-2xl p-5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer"
+            aria-label="어르신 로그인 페이지로 이동"
           >
-            <Link href="/elder/login">👴 어르신 로그인</Link>
-          </Button>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                {/* 아이콘 컨테이너 */}
+                <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                  <MessageCircle className="size-6 text-white" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-white">어르신 로그인</p>
+                  <p className="text-sm text-white/75">PIN으로 간편하게 입장</p>
+                </div>
+              </div>
+              <ArrowRight className="size-5 text-white/60 group-hover:translate-x-0.5 transition-transform" />
+            </div>
+          </Link>
 
-          {/* 가족 관리 버튼 (outline 스타일) */}
-          <Button
-            asChild
-            variant="outline"
-            className="h-14 text-lg font-semibold border-2 border-orange-300 text-orange-700 hover:bg-orange-50 rounded-2xl"
+          {/* 가족 관리 카드 */}
+          <Link
+            href="/family/login"
+            className="group relative overflow-hidden rounded-2xl p-5 bg-white hover:bg-orange-50/50 border border-border hover:border-orange-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer"
+            aria-label="가족 관리 페이지로 이동"
           >
-            <Link href="/family/login">👨‍👩‍👧 가족 관리</Link>
-          </Button>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                {/* 아이콘 컨테이너 */}
+                <div className="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center shrink-0">
+                  <Users className="size-6 text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-foreground">가족 관리</p>
+                  <p className="text-sm text-muted-foreground">어르신을 등록하고 관리</p>
+                </div>
+              </div>
+              <ArrowRight className="size-5 text-muted-foreground/40 group-hover:translate-x-0.5 group-hover:text-orange-400 transition-all" />
+            </div>
+          </Link>
         </div>
 
         {/* 서비스 소개 */}
-        <p className="text-sm text-gray-500 text-center leading-relaxed">
-          AI와의 자연스러운 대화를 통해
-          <br />
-          어르신의 소중한 기억을 보존합니다
+        <p className="text-xs text-muted-foreground/60 text-center leading-relaxed">
+          소중한 기억을 안전하게 보존합니다
         </p>
       </div>
     </div>

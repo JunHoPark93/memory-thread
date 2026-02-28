@@ -66,19 +66,23 @@ export default function FamilyDashboardPage() {
   };
 
   return (
-    <div className="pt-6 pb-12 space-y-6">
+    <div className="pt-6 pb-12 space-y-5">
       {/* 헤더 영역 */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-800">
-          관리 대상 어르신
-        </h1>
+        <div>
+          <h1 className="text-xl font-bold text-foreground">관리 대상 어르신</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {MOCK_ELDERS.length}명 등록됨
+          </p>
+        </div>
         <Button
           onClick={() => setIsDialogOpen(true)}
-          className="bg-gray-800 hover:bg-gray-900 text-white"
+          className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all duration-200"
           size="sm"
+          aria-label="새 어르신 추가"
         >
           <Plus className="size-4" />
-          어르신 추가
+          추가
         </Button>
       </div>
 
@@ -96,9 +100,9 @@ export default function FamilyDashboardPage() {
 
       {/* 어르신 추가 다이얼로그 */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-sm mx-4">
+        <DialogContent className="max-w-sm mx-4 rounded-3xl border-border/60 shadow-2xl">
           <DialogHeader>
-            <DialogTitle>새 어르신 추가</DialogTitle>
+            <DialogTitle className="text-lg font-bold">새 어르신 추가</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
@@ -106,7 +110,7 @@ export default function FamilyDashboardPage() {
             <div className="space-y-1.5">
               <label
                 htmlFor="elder-name"
-                className="text-sm font-medium text-gray-700"
+                className="text-sm font-medium text-foreground"
               >
                 어르신 이름
               </label>
@@ -118,9 +122,10 @@ export default function FamilyDashboardPage() {
                   setNameError("");
                 }}
                 placeholder="예: 김할아버지"
+                className="h-10 rounded-xl border-border/70 bg-muted/30 focus:bg-white transition-colors"
               />
               {nameError && (
-                <p className="text-red-500 text-xs">{nameError}</p>
+                <p className="text-destructive text-xs" role="alert">{nameError}</p>
               )}
             </div>
 
@@ -128,7 +133,7 @@ export default function FamilyDashboardPage() {
             <div className="space-y-1.5">
               <label
                 htmlFor="elder-pin"
-                className="text-sm font-medium text-gray-700"
+                className="text-sm font-medium text-foreground"
               >
                 PIN 번호 (4자리 숫자)
               </label>
@@ -145,18 +150,22 @@ export default function FamilyDashboardPage() {
                 placeholder="4자리 숫자"
                 maxLength={4}
                 inputMode="numeric"
+                className="h-10 rounded-xl border-border/70 bg-muted/30 focus:bg-white transition-colors"
               />
               {pinError && (
-                <p className="text-red-500 text-xs">{pinError}</p>
+                <p className="text-destructive text-xs" role="alert">{pinError}</p>
               )}
             </div>
           </div>
 
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={handleClose}>
+            <Button variant="outline" onClick={handleClose} className="rounded-xl">
               취소
             </Button>
-            <Button onClick={handleSave} className="bg-gray-800 hover:bg-gray-900">
+            <Button
+              onClick={handleSave}
+              className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-sm"
+            >
               저장
             </Button>
           </DialogFooter>

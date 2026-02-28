@@ -95,16 +95,21 @@ export default function ElderChatPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)]">
-      {/* 채팅 제목 */}
-      <div className="py-4">
-        <h1 className="text-2xl font-bold text-gray-800 text-center">
-          오늘의 대화
-        </h1>
+    <div className="flex flex-col h-[calc(100vh-64px)]">
+      {/* 채팅 헤더 */}
+      <div className="py-4 text-center border-b border-border/50">
+        <div className="flex items-center justify-center gap-2">
+          {/* 온라인 상태 인디케이터 */}
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
+          <h1 className="text-xl font-bold text-foreground">
+            오늘의 대화
+          </h1>
+        </div>
+        <p className="text-sm text-muted-foreground mt-0.5">AI 친구와 이야기해요</p>
       </div>
 
       {/* 메시지 목록 (스크롤 영역) */}
-      <div className="flex-1 overflow-y-auto pb-4">
+      <div className="flex-1 overflow-y-auto py-4 space-y-1" role="log" aria-label="채팅 메시지">
         {messages.map((message) => (
           <ChatMessage
             key={message.id}
@@ -116,22 +121,26 @@ export default function ElderChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 하단 고정 입력 영역 */}
-      <div className="border-t bg-white pt-3 pb-4">
+      {/* 하단 고정 입력 영역 - pill 형태 */}
+      <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm pt-3 pb-4">
         <div className="flex gap-2 items-end">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="메시지를 입력하세요..."
-            className="flex-1 resize-none text-lg min-h-[52px] max-h-32"
-            rows={2}
-          />
+          {/* pill 형태 입력창 */}
+          <div className="flex-1 relative">
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="메시지를 입력하세요..."
+              className="flex-1 resize-none text-lg min-h-[52px] max-h-32 rounded-2xl border-border/70 bg-muted/40 focus:bg-white pr-4 pl-4 transition-colors"
+              rows={1}
+            />
+          </div>
+          {/* 세련된 전송 버튼 */}
           <Button
             onClick={handleSend}
             disabled={!input.trim()}
-            className="h-[52px] w-[52px] bg-orange-500 hover:bg-orange-600 text-white rounded-xl flex-shrink-0"
-            aria-label="전송"
+            className="h-[52px] w-[52px] rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white flex-shrink-0 shadow-md hover:shadow-lg disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200"
+            aria-label="메시지 전송"
           >
             <Send className="size-5" />
           </Button>

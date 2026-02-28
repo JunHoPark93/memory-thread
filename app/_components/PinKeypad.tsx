@@ -19,7 +19,7 @@ const KEYPAD_LAYOUT = [
   ["delete", "0", "confirm"],
 ];
 
-// PIN 숫자 키패드 컴포넌트 (어르신 친화적 큰 버튼)
+// PIN 숫자 키패드 컴포넌트 (어르신 친화적 큰 버튼, 모던 스타일)
 export default function PinKeypad({
   onDigit,
   onDelete,
@@ -27,7 +27,7 @@ export default function PinKeypad({
   currentPin = "",
 }: PinKeypadProps) {
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className="flex flex-col items-center gap-3" role="group" aria-label="PIN 입력 키패드">
       {KEYPAD_LAYOUT.map((row, rowIndex) => (
         <div key={rowIndex} className="flex gap-3">
           {row.map((key) => {
@@ -37,10 +37,10 @@ export default function PinKeypad({
                 <button
                   key={key}
                   onClick={onDelete}
-                  className="h-16 w-16 rounded-full bg-gray-200 hover:bg-gray-300 active:bg-gray-400 flex items-center justify-center text-gray-700 font-medium transition-colors"
+                  className="h-16 w-16 rounded-2xl bg-muted hover:bg-muted/80 active:scale-95 flex items-center justify-center text-muted-foreground hover:text-foreground transition-all duration-150 shadow-sm"
                   aria-label="지우기"
                 >
-                  <Delete className="size-6" />
+                  <Delete className="size-5" />
                 </button>
               );
             }
@@ -51,7 +51,7 @@ export default function PinKeypad({
                 <button
                   key={key}
                   onClick={() => onComplete(currentPin)}
-                  className="h-16 w-16 rounded-full bg-orange-500 hover:bg-orange-600 active:bg-orange-700 flex items-center justify-center text-white text-sm font-bold transition-colors"
+                  className="h-16 w-16 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 active:scale-95 flex items-center justify-center text-white text-sm font-bold transition-all duration-150 shadow-md hover:shadow-lg"
                   aria-label="확인"
                 >
                   확인
@@ -64,8 +64,8 @@ export default function PinKeypad({
               <button
                 key={key}
                 onClick={() => onDigit(key)}
-                className="h-16 w-16 rounded-full bg-white hover:bg-orange-50 active:bg-orange-100 border-2 border-orange-200 flex items-center justify-center text-2xl font-bold text-gray-800 transition-colors shadow-sm"
-                aria-label={key}
+                className="h-16 w-16 rounded-2xl bg-white hover:bg-orange-50 active:scale-95 border border-border hover:border-orange-200 flex items-center justify-center text-2xl font-semibold text-foreground transition-all duration-150 shadow-sm hover:shadow-md"
+                aria-label={`숫자 ${key}`}
               >
                 {key}
               </button>
