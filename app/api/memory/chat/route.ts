@@ -84,8 +84,13 @@ export async function POST(request: NextRequest) {
           .join("\n")
       : "";
 
+    // history 검증: 첫 번째 content는 반드시 'user' role이어야 함
+    const validatedHistory = history.length > 0 && history[0].role !== "user"
+      ? history.slice(1) // model로 시작하면 첫 요소 제거
+      : history;
+
     // 멀티턴 채팅 세션 시작
-    const chat = nanoBanana2Model.startChat({ history });
+    const chat = nanoBanana2Model.startChat({ history: validatedHistory });
 
     let userParts: Array<
       | { text: string }
