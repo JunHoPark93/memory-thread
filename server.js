@@ -56,7 +56,7 @@ app
         .connect({
           model: liveModel,
           systemInstruction: {
-            parts: [{ text: "모든 응답을 한국어로 해주세요." }]
+            parts: [{ text: "유저는 한국어로만 말합니다. 모든 응답을 한국어로 해주세요." }]
           },
           config: {
             responseModalities: [Modality.AUDIO],
