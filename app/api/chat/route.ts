@@ -65,23 +65,40 @@ export async function POST(request: NextRequest) {
     .from("messages")
     .insert({ elder_id: elderId, session_id: sessionId, role: "assistant", content: reply });
 
-  // 3의 배수 메시지마다 포인트 +50
+    // 어르신 일일 대화 횟수 + 포인트 업데이트
+  const DAILY_THRESHOLDS = [3, 5, 10, 20, 30, 50];
   let newPoints: number | null = null;
-  if (newCount % 3 === 0) {
-    const { data: elder } = await supabase
-      .from("elders")
-      .select("total_points")
-      .eq("id", elderId)
-      .single();
 
-    if (elder) {
-      const updatedPoints = (elder.total_points ?? 0) + 50;
-      await supabase
-        .from("elders")
-        .update({ total_points: updatedPoints })
-        .eq("id", elderId);
-      newPoints = updatedPoints;
-    }
+  const { data: elder } = await supabase
+    .from("elders")
+    .select("total_points, daily_chat_count, last_chat_date")
+    .eq("id", elderId)
+    .single();
+
+  if (elder) {
+    // KST 기준 오늘 날짜 (UTC+9)
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const isNewDay = elder.last_chat_date !== today;
+    const currentDaily = isNewDay ? 0 : (elder.daily_chat_count ?? 0);
+    const newDailyCount = currentDaily + 1;
+
+    // 일일 대화 횟수 기준 뱃지 계산
+    const newBadgeCount = DAILY_THRESHOLDS.filter((t) => t <= newDailyCount).length;
+
+    // 세션 메시지 3의 배수마다 포인트 +50 (기존 유지)
+    const updatedPoints =
+      newCount % 3 === 0 ? (elder.total_points ?? 0) + 50 : (elder.total_points ?? 0);
+    if (newCount % 3 === 0) newPoints = updatedPoints;
+
+    await supabase
+      .from("elders")
+      .update({
+        total_points: updatedPoints,
+        daily_chat_count: newDailyCount,
+        last_chat_date: today,
+        badge_count: newBadgeCount,
+      })
+      .eq("id", elderId);
   }
 
   return NextResponse.json({ reply, sessionId, newPoints });
