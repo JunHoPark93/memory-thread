@@ -489,6 +489,21 @@ export default function ElderMemoryPage() {
     return res.json();
   };
 
+  const buildHistoryWithLiveBuffer = (baseHistory: ChatTurn[]) => {
+    const snapshot = [...baseHistory];
+    const pendingUserText = liveUserTurnDisplayTextRef.current.trim();
+    const pendingAiText = liveAiTurnDisplayTextRef.current.trim();
+
+    if (pendingUserText) {
+      snapshot.push({ role: "user", parts: [{ text: pendingUserText }] });
+    }
+    if (pendingAiText) {
+      snapshot.push({ role: "model", parts: [{ text: pendingAiText }] });
+    }
+
+    return snapshot;
+  };
+
   // 사진 선택 → 분석 시작
   const handleSelectImage = async (image: ContextImage) => {
     disconnectLive();
@@ -561,9 +576,11 @@ export default function ElderMemoryPage() {
     setIsGenerating(true);
 
     try {
+      const historyForImage = buildHistoryWithLiveBuffer(chatHistory);
       const data = await callMemoryChat({
         message: "지금까지 나눈 기억들을 반영한 이미지를 생성해주세요.",
         generateImage: true,
+        currentHistory: historyForImage,
       });
 
       if (!data) return;
@@ -590,7 +607,7 @@ export default function ElderMemoryPage() {
 
       // 히스토리 누적
       const newHistory: ChatTurn[] = [
-        ...chatHistory,
+        ...historyForImage,
         { role: "user", parts: [{ text: "이미지를 생성해주세요." }] },
         { role: "model", parts: [{ text: data.text }] },
       ];
