@@ -1,43 +1,35 @@
-// 쿠키 기반 세션 관리 스텁
-// 실제 구현에서는 cookies() 또는 JWT를 사용하여 세션을 관리합니다
+// localStorage 기반 세션 관리 (클라이언트 전용)
 
-/**
- * 어르신 세션 조회
- * @returns 어르신 ID 또는 null
- */
-export async function getElderSession(): Promise<string | null> {
-  return null;
+const ELDER_SESSION_KEY = 'mt_elder_id';
+const ELDER_NAME_KEY = 'mt_elder_name';
+const FAMILY_SESSION_KEY = 'mt_family_id';
+const FAMILY_NAME_KEY = 'mt_family_name';
+
+export function setElderSession(elderId: string, name?: string): void {
+  localStorage.setItem(ELDER_SESSION_KEY, elderId);
+  if (name) localStorage.setItem(ELDER_NAME_KEY, name);
 }
 
-/**
- * 가족 세션 조회
- * @returns 가족 ID 또는 null
- */
-export async function getFamilySession(): Promise<string | null> {
-  return null;
+export function getElderSession(): string | null {
+  return localStorage.getItem(ELDER_SESSION_KEY);
 }
 
-/**
- * 어르신 세션 설정
- * @param elderId - 어르신 ID
- */
-export async function setElderSession(elderId: string): Promise<void> {
-  // TODO: 쿠키에 세션 저장
-  void elderId;
+export function getElderName(): string | null {
+  return localStorage.getItem(ELDER_NAME_KEY);
 }
 
-/**
- * 가족 세션 설정
- * @param familyId - 가족 ID
- */
-export async function setFamilySession(familyId: string): Promise<void> {
-  // TODO: 쿠키에 세션 저장
-  void familyId;
+export function setFamilySession(familyId: string, name?: string): void {
+  localStorage.setItem(FAMILY_SESSION_KEY, familyId);
+  if (name) localStorage.setItem(FAMILY_NAME_KEY, name);
 }
 
-/**
- * 세션 초기화 (로그아웃)
- */
-export async function clearSession(): Promise<void> {
-  // TODO: 쿠키 삭제
+export function getFamilySession(): string | null {
+  return localStorage.getItem(FAMILY_SESSION_KEY);
+}
+
+export function clearSession(): void {
+  localStorage.removeItem(ELDER_SESSION_KEY);
+  localStorage.removeItem(ELDER_NAME_KEY);
+  localStorage.removeItem(FAMILY_SESSION_KEY);
+  localStorage.removeItem(FAMILY_NAME_KEY);
 }
