@@ -127,6 +127,10 @@ export default function ElderChatPage() {
   };
 
   const connectLive = () => {
+    if (!elderId) {
+      toast.error("라이브 연결 전에 로그인 상태를 확인해 주세요.");
+      return;
+    }
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
     shouldReconnectRef.current = true;
     const protocol = location.protocol === "https:" ? "wss" : "ws";
@@ -136,13 +140,17 @@ export default function ElderChatPage() {
     setLiveStatus("라이브 연결 중...");
 
     ws.onopen = () => {
-      setIsLiveConnected(true);
-      setLiveStatus("라이브 연결됨");
+      setIsLiveConnected(false);
+      setLiveStatus("라이브 초기화 중...");
       reconnectAttemptsRef.current = 0;
       startPing();
-      if (wantMicRef.current && !isMicOn) {
-        startMic();
-      }
+      ws.send(
+        JSON.stringify({
+          type: "init",
+          elderId,
+          elderName,
+        })
+      );
     };
 
     ws.onclose = (event) => {
@@ -172,6 +180,10 @@ export default function ElderChatPage() {
 
       if (msg.type === "ready") {
         setLiveStatus("라이브 준비 완료");
+        setIsLiveConnected(true);
+        if (wantMicRef.current && !isMicOn) {
+          startMic();
+        }
         return;
       }
 
