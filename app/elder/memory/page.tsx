@@ -6,9 +6,10 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { ChevronLeft, Send, Home, Sparkles, Check } from "lucide-react";
+import { ChevronLeft, Send, Home, Sparkles, Check, Mic, MicOff, Radio } from "lucide-react";
 import ChatMessage from "@/app/_components/ChatMessage";
 import { getElderSession, getElderName } from "@/app/_lib/session";
+import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
 
 // 화면 단계 타입
 type Step = "select" | "analyzing" | "chat" | "saved";
@@ -56,6 +57,26 @@ export default function ElderMemoryPage() {
   const [input, setInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [liveStatus, setLiveStatus] = useState("라이브 연결 안 됨");
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [isLiveMicOn, setIsLiveMicOn] = useState(false);
+  const liveSessionRef = useRef<Session | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const shouldReconnectRef = useRef(false);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const inputCtxRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const silenceRef = useRef<GainNode | null>(null);
+  const playbackCtxRef = useRef<AudioContext | null>(null);
+  const playbackTimeRef = useRef(0);
+  const liveUserTurnMessageIdRef = useRef<string | null>(null);
+  const liveUserTurnDisplayTextRef = useRef("");
+  const liveUserTurnRawTextRef = useRef("");
+  const liveAiTurnMessageIdRef = useRef<string | null>(null);
+  const liveAiTurnDisplayTextRef = useRef("");
+  const liveAiTurnRawTextRef = useRef("");
 
   // 이미지 생성 상태
   const [isGenerating, setIsGenerating] = useState(false);
@@ -90,6 +111,353 @@ export default function ElderMemoryPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // 페이지 이동/단계 변경 시 음성 상태 정리
+  useEffect(() => {
+    if (step !== "chat" && typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  }, [step]);
+
+  useEffect(() => {
+    return () => {
+      disconnectLive();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchImageAsBase64 = async (url: string) => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("사진을 불러오지 못했습니다.");
+    const buffer = await res.arrayBuffer();
+    const mimeType = res.headers.get("content-type") ?? "image/jpeg";
+    return {
+      mimeType,
+      data: arrayBufferToBase64(buffer),
+    };
+  };
+
+  const sendInitialPhotoPrompt = async (image: ContextImage) => {
+    const session = liveSessionRef.current;
+    if (!session) return;
+
+    const { data, mimeType } = await fetchImageAsBase64(image.image_url);
+    const initialPrompt = "이 사진을 보고 따뜻하게 설명하고, 기억을 떠올릴 질문 1가지를 해주세요.";
+
+    session.sendClientContent({
+      turns: {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType, data } },
+          { text: initialPrompt },
+        ],
+      },
+      turnComplete: true,
+    });
+  };
+
+  const resetLiveTurnState = () => {
+    liveUserTurnMessageIdRef.current = null;
+    liveUserTurnDisplayTextRef.current = "";
+    liveUserTurnRawTextRef.current = "";
+    liveAiTurnMessageIdRef.current = null;
+    liveAiTurnDisplayTextRef.current = "";
+    liveAiTurnRawTextRef.current = "";
+  };
+
+  const stopReconnect = () => {
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectAttemptsRef.current = 0;
+  };
+
+  const scheduleReconnect = () => {
+    if (reconnectTimerRef.current || !selectedImage) return;
+    const attempt = reconnectAttemptsRef.current + 1;
+    reconnectAttemptsRef.current = attempt;
+    const delay = Math.min(10_000, 1000 * Math.pow(2, attempt - 1));
+    setLiveStatus(`라이브 재연결 중... (${Math.round(delay / 1000)}s)`);
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      void connectLive(selectedImage);
+    }, delay);
+  };
+
+  const stopLiveMic = () => {
+    if (liveSessionRef.current) {
+      liveSessionRef.current.sendRealtimeInput({ audioStreamEnd: true });
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
+    }
+    processorRef.current?.disconnect();
+    processorRef.current = null;
+    inputSourceRef.current?.disconnect();
+    inputSourceRef.current = null;
+    silenceRef.current?.disconnect();
+    silenceRef.current = null;
+
+    if (inputCtxRef.current) {
+      inputCtxRef.current.close();
+      inputCtxRef.current = null;
+    }
+    setIsLiveMicOn(false);
+    if (isLiveConnected) {
+      setLiveStatus("라이브 연결됨");
+    }
+  };
+
+  const startLiveMic = async () => {
+    if (!liveSessionRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("이 브라우저는 마이크를 지원하지 않습니다.");
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStreamRef.current = stream;
+
+    const AudioCtx =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) {
+      toast.error("이 브라우저는 오디오 처리를 지원하지 않습니다.");
+      return;
+    }
+
+    const inputCtx = new AudioCtx();
+    inputCtxRef.current = inputCtx;
+    const inputSource = inputCtx.createMediaStreamSource(stream);
+    inputSourceRef.current = inputSource;
+    const processor = inputCtx.createScriptProcessor(4096, 1, 1);
+    processorRef.current = processor;
+
+    const silence = inputCtx.createGain();
+    silence.gain.value = 0;
+    silenceRef.current = silence;
+
+    processor.onaudioprocess = (e) => {
+      const inputData = e.inputBuffer.getChannelData(0);
+      const downsampled = downsampleBuffer(inputData, inputCtx.sampleRate, 16000);
+      const int16 = floatTo16BitPCM(downsampled);
+      const session = liveSessionRef.current;
+      if (session) {
+        session.sendRealtimeInput({
+          audio: {
+            data: arrayBufferToBase64(int16.buffer),
+            mimeType: "audio/pcm;rate=16000",
+          },
+        });
+      }
+    };
+
+    inputSource.connect(processor);
+    processor.connect(silence);
+    silence.connect(inputCtx.destination);
+
+    setIsLiveMicOn(true);
+    setLiveStatus("라이브 음성 대화 중");
+  };
+
+  const playPcmChunk = (base64: string, mimeType: string) => {
+    const rate = parseSampleRate(mimeType) || 24000;
+    if (!playbackCtxRef.current) {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      playbackCtxRef.current = new AudioCtx({ sampleRate: rate });
+      playbackTimeRef.current = playbackCtxRef.current.currentTime;
+    }
+
+    const ctx = playbackCtxRef.current;
+    const pcm = base64ToUint8(base64);
+    const float32 = pcm16ToFloat32(pcm);
+    const buffer = ctx.createBuffer(1, float32.length, rate);
+    buffer.getChannelData(0).set(float32);
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    playbackTimeRef.current = Math.max(playbackTimeRef.current, ctx.currentTime);
+    source.start(playbackTimeRef.current);
+    playbackTimeRef.current += buffer.duration;
+  };
+
+  const appendLiveMessage = (role: "ai" | "user", rawText: string) => {
+    if (!rawText) return;
+    const refs =
+      role === "ai"
+        ? {
+            idRef: liveAiTurnMessageIdRef,
+            displayRef: liveAiTurnDisplayTextRef,
+            rawRef: liveAiTurnRawTextRef,
+          }
+        : {
+            idRef: liveUserTurnMessageIdRef,
+            displayRef: liveUserTurnDisplayTextRef,
+            rawRef: liveUserTurnRawTextRef,
+          };
+
+    if (!refs.idRef.current) {
+      const id = `live-${role}-${Date.now()}`;
+      refs.idRef.current = id;
+      refs.rawRef.current = rawText;
+      refs.displayRef.current = rawText;
+      setMessages((prev) => [...prev, { id, role, content: rawText }]);
+      return;
+    }
+
+    const previousRaw = refs.rawRef.current;
+    const previousDisplay = refs.displayRef.current;
+    let delta = "";
+
+    if (rawText.startsWith(previousRaw)) {
+      delta = rawText.slice(previousRaw.length);
+    } else if (previousDisplay.endsWith(rawText)) {
+      delta = "";
+    } else {
+      delta = rawText;
+    }
+
+    if (!delta) return;
+    const nextDisplay = `${previousDisplay}${delta}`;
+    refs.rawRef.current = rawText;
+    refs.displayRef.current = nextDisplay;
+    const id = refs.idRef.current;
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: nextDisplay } : m)));
+  };
+
+  const finalizeLiveTurnToHistory = () => {
+    const userText = liveUserTurnDisplayTextRef.current.trim();
+    const aiText = liveAiTurnDisplayTextRef.current.trim();
+    if (userText || aiText) {
+      setChatHistory((prev) => {
+        const next = [...prev];
+        if (userText) next.push({ role: "user", parts: [{ text: userText }] });
+        if (aiText) next.push({ role: "model", parts: [{ text: aiText }] });
+        return next;
+      });
+    }
+  };
+
+  const handleLiveServerMessage = (msg: LiveServerMessage) => {
+    const serverContent = msg.serverContent;
+    if (!serverContent) return;
+
+    const inputText = serverContent.inputTranscription?.text;
+    if (inputText) appendLiveMessage("user", inputText);
+
+    const outputText = serverContent.outputTranscription?.text;
+    if (outputText) appendLiveMessage("ai", outputText);
+
+    if (serverContent.turnComplete) {
+      finalizeLiveTurnToHistory();
+      resetLiveTurnState();
+    }
+
+    const parts = serverContent.modelTurn?.parts;
+    if (!parts) return;
+    for (const part of parts) {
+      const inline = part.inlineData;
+      if (inline?.data) {
+        playPcmChunk(inline.data, inline.mimeType || "audio/pcm;rate=24000");
+      }
+    }
+  };
+
+  const connectLive = async (image: ContextImage) => {
+    if (!elderId || liveSessionRef.current) return;
+
+    shouldReconnectRef.current = true;
+    setLiveStatus("라이브 연결 중...");
+
+    try {
+      const tokenRes = await fetch("/api/live/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ elderId, elderName }),
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData?.token || !tokenData?.model) {
+        setLiveStatus(`오류: ${tokenData?.error || "토큰 발급 실패"}`);
+        throw new Error(tokenData?.error || "토큰 발급 실패");
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey: tokenData.token,
+        httpOptions: { apiVersion: "v1alpha" },
+      });
+
+      const session = await ai.live.connect({
+        model: tokenData.model,
+        config: { responseModalities: [Modality.AUDIO] },
+        callbacks: {
+          onopen: () => {
+            setLiveStatus("라이브 준비 완료");
+            setIsLiveConnected(true);
+            reconnectAttemptsRef.current = 0;
+          },
+          onmessage: (msg) => handleLiveServerMessage(msg),
+          onerror: () => {
+            setLiveStatus("라이브 연결 오류");
+          },
+          onclose: (event) => {
+            finalizeLiveTurnToHistory();
+            resetLiveTurnState();
+            liveSessionRef.current = null;
+            setIsLiveConnected(false);
+            setLiveStatus(
+              `라이브 연결 끊김 (code ${event.code}${event.reason ? `: ${event.reason}` : ""})`
+            );
+            stopLiveMic();
+            if (shouldReconnectRef.current) {
+              scheduleReconnect();
+            }
+          },
+        },
+      });
+
+      liveSessionRef.current = session;
+      await sendInitialPhotoPrompt(image);
+    } catch (err) {
+      if (shouldReconnectRef.current) {
+        scheduleReconnect();
+      }
+      throw err;
+    }
+  };
+
+  const disconnectLive = () => {
+    shouldReconnectRef.current = false;
+    finalizeLiveTurnToHistory();
+    if (liveSessionRef.current) {
+      liveSessionRef.current.close();
+      liveSessionRef.current = null;
+    }
+    resetLiveTurnState();
+    stopReconnect();
+    stopLiveMic();
+    setIsLiveConnected(false);
+    setLiveStatus("라이브 연결 안 됨");
+  };
+
+  const toggleLiveMic = async () => {
+    if (!isLiveConnected) return;
+    try {
+      if (isLiveMicOn) {
+        stopLiveMic();
+      } else {
+        await startLiveMic();
+      }
+    } catch {
+      toast.error("마이크를 시작할 수 없습니다.");
+      stopLiveMic();
+    }
+  };
+
   // API 호출 공통 함수
   const callMemoryChat = async (options: {
     message: string;
@@ -123,35 +491,20 @@ export default function ElderMemoryPage() {
 
   // 사진 선택 → 분석 시작
   const handleSelectImage = async (image: ContextImage) => {
+    disconnectLive();
     setSelectedImage(image);
     setStep("analyzing");
     setMessages([]);
     setChatHistory([]);
     setHasGeneratedImage(false);
     setGeneratedImageBase64(null);
+    setRestorationId(null);
 
     try {
-      const data = await callMemoryChat({
-        message: "사진을 분석하고 기억을 이끌어내는 질문을 해주세요.",
-        currentHistory: [],
-        imageOverride: image, // state 반영 전이므로 지역 변수 직접 전달
-      });
-
-      if (!data) return;
-
-      // 첫 AI 응답 표시
-      setMessages([{ id: "ai-init", role: "ai", content: data.text }]);
-
-      // 히스토리 업데이트
-      setChatHistory([
-        { role: "user", parts: [{ text: "사진을 분석하고 기억을 이끌어내는 질문을 해주세요." }] },
-        { role: "model", parts: [{ text: data.text }] },
-      ]);
-
-      if (data.restorationId) setRestorationId(data.restorationId);
+      await connectLive(image);
       setStep("chat");
     } catch (err) {
-      toast.error((err as Error).message || "사진 분석에 실패했습니다.");
+      toast.error((err as Error).message || "라이브 연결에 실패했습니다.");
       setStep("select");
     }
   };
@@ -161,11 +514,22 @@ export default function ElderMemoryPage() {
     const trimmed = input.trim();
     if (!trimmed || chatLoading || isGenerating) return;
 
+    if (liveSessionRef.current && isLiveConnected) {
+      liveSessionRef.current.sendClientContent({
+        turns: {
+          role: "user",
+          parts: [{ text: trimmed }],
+        },
+        turnComplete: true,
+      });
+      setInput("");
+      return;
+    }
+
     const userMsg: Message = { id: `user-${Date.now()}`, role: "user", content: trimmed };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setChatLoading(true);
-
     try {
       const data = await callMemoryChat({ message: trimmed });
       if (!data) return;
@@ -247,6 +611,7 @@ export default function ElderMemoryPage() {
 
   // 기억 확정 → saved 화면
   const handleConfirm = () => {
+    disconnectLive();
     setStep("saved");
     toast.success("기억이 소중히 저장되었습니다!");
   };
@@ -342,7 +707,10 @@ export default function ElderMemoryPage() {
         {/* 헤더 */}
         <div className="py-3 border-b border-border/50 flex items-center gap-3">
           <button
-            onClick={() => setStep("select")}
+            onClick={() => {
+              disconnectLive();
+              setStep("select");
+            }}
             className="text-muted-foreground hover:text-foreground transition-colors"
             aria-label="사진 선택으로 돌아가기"
           >
@@ -410,12 +778,47 @@ export default function ElderMemoryPage() {
 
         {/* 입력 영역 */}
         <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm pt-3 pb-4">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-xs text-muted-foreground truncate">{liveStatus}</span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant={isLiveConnected ? "default" : "outline"}
+                onClick={() => {
+                  if (!selectedImage) return;
+                  if (isLiveConnected) {
+                    disconnectLive();
+                    return;
+                  }
+                  void connectLive(selectedImage).catch(() => {
+                    toast.error("라이브 연결에 실패했습니다.");
+                  });
+                }}
+                className="h-9 rounded-xl px-3"
+                aria-label={isLiveConnected ? "라이브 종료" : "라이브 연결"}
+              >
+                <Radio className="size-4 mr-1.5" />
+                {isLiveConnected ? "라이브 ON" : "라이브 OFF"}
+              </Button>
+              <Button
+                type="button"
+                variant={isLiveMicOn ? "default" : "outline"}
+                onClick={() => void toggleLiveMic()}
+                disabled={!isLiveConnected}
+                className="h-9 rounded-xl px-3"
+                aria-label={isLiveMicOn ? "라이브 마이크 중지" : "라이브 마이크 시작"}
+              >
+                {isLiveMicOn ? <MicOff className="size-4 mr-1.5" /> : <Mic className="size-4 mr-1.5" />}
+                {isLiveMicOn ? "라이브 음성 ON" : "라이브 음성 OFF"}
+              </Button>
+            </div>
+          </div>
           <div className="flex gap-2 items-end">
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="기억을 이야기해주세요..."
+              placeholder={isLiveConnected ? "라이브에 보낼 메시지를 입력하세요..." : "기억을 이야기해주세요..."}
               disabled={chatLoading || isGenerating}
               className="flex-1 resize-none text-lg min-h-[52px] max-h-32 rounded-2xl border-border/70 bg-muted/40 focus:bg-white pr-4 pl-4 transition-colors"
               rows={1}
@@ -470,4 +873,67 @@ export default function ElderMemoryPage() {
   }
 
   return null;
+}
+
+function downsampleBuffer(buffer: Float32Array, inputRate: number, outputRate: number) {
+  if (outputRate === inputRate) return buffer;
+  const ratio = inputRate / outputRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  let offset = 0;
+
+  for (let i = 0; i < newLength; i++) {
+    const nextOffset = Math.round((i + 1) * ratio);
+    let sum = 0;
+    let count = 0;
+    for (let j = offset; j < nextOffset && j < buffer.length; j++) {
+      sum += buffer[j];
+      count++;
+    }
+    result[i] = count ? sum / count : 0;
+    offset = nextOffset;
+  }
+  return result;
+}
+
+function floatTo16BitPCM(float32: Float32Array) {
+  const output = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return output;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8(base64: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function pcm16ToFloat32(bytes: Uint8Array) {
+  const view = new DataView(bytes.buffer);
+  const float32 = new Float32Array(bytes.byteLength / 2);
+  for (let i = 0; i < float32.length; i++) {
+    const int16 = view.getInt16(i * 2, true);
+    float32[i] = int16 / 0x8000;
+  }
+  return float32;
+}
+
+function parseSampleRate(mimeType: string) {
+  const match = /rate=(\d+)/.exec(mimeType || "");
+  return match ? Number(match[1]) : null;
 }

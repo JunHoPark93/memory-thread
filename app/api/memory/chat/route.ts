@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { nanoBanana2Model } from "@/app/_lib/gemini";
+import { geminiModel, nanoBanana2Model } from "@/app/_lib/gemini";
 import { supabase } from "@/app/_lib/supabase";
 
 // 대화 턴 타입
 interface ChatTurn {
   role: "user" | "model";
   parts: Array<{ text: string }>;
+}
+
+interface GeminiApiError {
+  name?: string;
+  message?: string;
+  status?: number;
+  errorDetails?: Array<{
+    "@type"?: string;
+    retryDelay?: string;
+  }>;
 }
 
 // 이미지 URL을 base64 인라인 데이터로 변환
@@ -19,6 +29,19 @@ async function fetchImageAsBase64(
   const mimeType = res.headers.get("content-type") ?? "image/jpeg";
   const data = Buffer.from(buffer).toString("base64");
   return { data, mimeType };
+}
+
+function parseRetrySeconds(err: GeminiApiError): number | null {
+  const details = err.errorDetails;
+  if (!Array.isArray(details)) return null;
+
+  const retryInfo = details.find((d) => d?.["@type"]?.includes("RetryInfo"));
+  const delay = retryInfo?.retryDelay;
+  if (!delay) return null;
+
+  const matched = /^(\d+)(?:\.\d+)?s$/.exec(delay);
+  if (!matched) return null;
+  return Number(matched[1]);
 }
 
 // 나노바나나2 멀티턴 채팅 기반 이미지 분석 + 생성 API
@@ -106,8 +129,22 @@ export async function POST(request: NextRequest) {
       userParts = [{ text: message }];
     }
 
-    const result = await chat.sendMessage(userParts as Parameters<typeof chat.sendMessage>[0]);
-    const response = result.response;
+    let response: Awaited<ReturnType<typeof chat.sendMessage>>["response"];
+    try {
+      const result = await chat.sendMessage(userParts as Parameters<typeof chat.sendMessage>[0]);
+      response = result.response;
+    } catch (err) {
+      const apiErr = err as GeminiApiError;
+      const canFallbackToText = apiErr?.status === 429 && !generateImage;
+      if (!canFallbackToText) throw err;
+
+      // 이미지 모델 쿼터 초과 시 텍스트/비전 가능한 기본 모델로 폴백
+      const fallbackChat = geminiModel.startChat({ history });
+      const fallbackResult = await fallbackChat.sendMessage(
+        userParts as Parameters<typeof fallbackChat.sendMessage>[0]
+      );
+      response = fallbackResult.response;
+    }
 
     // 텍스트 + 이미지 파트 분리
     let textResponse = "";
@@ -189,6 +226,19 @@ export async function POST(request: NextRequest) {
     if ((err as Error).name === "AbortError") {
       return NextResponse.json({ error: "요청 시간이 초과되었습니다. 다시 시도해주세요." }, { status: 408 });
     }
+
+    const apiErr = err as GeminiApiError;
+    if (apiErr?.status === 429) {
+      const retrySeconds = parseRetrySeconds(apiErr);
+      const retryHint = retrySeconds
+        ? `약 ${retrySeconds}초 뒤 다시 시도해주세요.`
+        : "잠시 후 다시 시도해주세요.";
+
+      const quotaMessage = `현재 Gemini 이미지 모델 사용량 한도에 도달했습니다. ${retryHint} 문제가 계속되면 API 요금제/결제 상태를 확인해주세요.`;
+      console.warn("[memory/chat] quota exceeded:", apiErr.message);
+      return NextResponse.json({ error: quotaMessage }, { status: 429 });
+    }
+
     console.error("[memory/chat]", err);
     return NextResponse.json({ error: "AI 처리 중 오류가 발생했습니다." }, { status: 500 });
   } finally {
