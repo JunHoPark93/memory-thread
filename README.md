@@ -37,7 +37,8 @@ Memory Thread는 고령 어르신을 위한 AI 기반 대화형 기억 복원 �
 
 ### 시스템 구조도
 
-```mermaid
+```
+
 graph TB
     subgraph "Frontend - Next.js 15"
         A[홈 페이지]
