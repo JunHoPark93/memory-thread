@@ -530,6 +530,13 @@ export default function ElderMemoryPage() {
     if (!trimmed || chatLoading || isGenerating) return;
 
     if (liveSessionRef.current && isLiveConnected) {
+      const userMsgId = `user-${Date.now()}`;
+      setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: trimmed }]);
+      // 라이브 텍스트 입력도 현재 턴 버퍼에 동기화해서 history 누락을 방지
+      liveUserTurnMessageIdRef.current = userMsgId;
+      liveUserTurnDisplayTextRef.current = trimmed;
+      liveUserTurnRawTextRef.current = trimmed;
+
       liveSessionRef.current.sendClientContent({
         turns: {
           role: "user",
