@@ -115,7 +115,7 @@ export default function ElderDetailPage({
 
         {/* 탭2: 사진 관리 */}
         <TabsContent value="photo" className="mt-5">
-          <ImageUploader />
+          <ImageUploader elderId={elderId} />
         </TabsContent>
 
         {/* 탭3: PIN 설정 */}
